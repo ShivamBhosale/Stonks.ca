@@ -63,3 +63,52 @@ python3 tsx_screener.py
 - Change the CSV save location away from `~/Desktop`
 - Add features beyond the four core filters without updating `THRESHOLDS`
 - Remove the dependency check at the top of the file
+
+---
+
+## Roadmap — Global Screener (v2)
+
+The next major version expands Stonks.ca from a TSX-only CLI into a **multi-exchange global screener** with commercial potential on Gumroad.
+
+### Goal
+A polished indie product that lets users scan any major stock exchange with the same signal logic, sold in tiers.
+
+### Target Exchanges
+| Exchange | Suffix | Timezone |
+|---|---|---|
+| TSX (Canada) | `.TO` | ET |
+| NYSE / NASDAQ (US) | *(none)* | ET |
+| LSE (UK) | `.L` | GMT |
+| ASX (Australia) | `.AX` | AEST |
+| NSE (India) | `.NS` | IST |
+| Frankfurt (Germany) | `.DE` | CET |
+
+yfinance already supports all of these — the data layer barely changes.
+
+### Architecture Direction
+Refactor the single-file into a proper package:
+
+```
+stonks/
+├── exchanges/
+│   ├── tsx.py       # suffix, timezone, holidays, trading hours
+│   ├── nyse.py
+│   ├── lse.py
+│   └── ...          # one config file per exchange
+├── signals.py       # shared: evaluate_alerts(), generate_suggestion()
+├── display.py       # shared: rich table, panels, formatting
+├── export.py        # shared: CSV / JSON export
+└── main.py          # entry point, exchange selector
+```
+
+Core signal logic (`signals.py`) stays **completely reusable** across all exchanges — only the exchange config (suffix, tz, hours, holidays) changes per market.
+
+### Gumroad Tiers
+| Tier | Price | What's included |
+|---|---|---|
+| Free (open source) | $0 | TSX-only CLI (current repo) |
+| Pro CLI | $9–$15 one-time | Multi-exchange, watchlist save, CSV/JSON export |
+| Web app | $5–$10/month | Browser UI (Flask/FastAPI + HTMX), email digest, scheduled scans |
+
+### When Returning to This
+Start with the `exchanges/` module refactor. Do not rewrite signal logic — extract it as-is into `signals.py` first, then build the per-exchange config schema around it.
