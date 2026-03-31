@@ -19,7 +19,8 @@ if _MISSING:
 import csv
 import os
 import warnings
-from datetime import datetime
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -49,6 +50,113 @@ THRESHOLDS = {
 }
 
 console = Console()
+
+ET = ZoneInfo("America/Toronto")
+
+# TSX statutory holidays for 2025 and 2026 (YYYY-MM-DD)
+TSX_HOLIDAYS = {
+    # 2025
+    date(2025, 1, 1),   # New Year's Day
+    date(2025, 2, 17),  # Family Day (Ontario)
+    date(2025, 4, 18),  # Good Friday
+    date(2025, 5, 19),  # Victoria Day
+    date(2025, 7, 1),   # Canada Day
+    date(2025, 8, 4),   # Civic Holiday (Ontario)
+    date(2025, 9, 1),   # Labour Day
+    date(2025, 10, 13), # Thanksgiving
+    date(2025, 12, 25), # Christmas Day
+    date(2025, 12, 26), # Boxing Day
+    # 2026
+    date(2026, 1, 1),   # New Year's Day
+    date(2026, 2, 16),  # Family Day (Ontario)
+    date(2026, 4, 3),   # Good Friday
+    date(2026, 5, 18),  # Victoria Day
+    date(2026, 7, 1),   # Canada Day
+    date(2026, 8, 3),   # Civic Holiday (Ontario)
+    date(2026, 9, 7),   # Labour Day
+    date(2026, 10, 12), # Thanksgiving
+    date(2026, 12, 25), # Christmas Day
+    date(2026, 12, 28), # Boxing Day (observed)
+}
+
+TSX_OPEN  = time(9, 30)
+TSX_CLOSE = time(16, 0)
+
+
+def get_market_status() -> tuple[str, str, str]:
+    """
+    Return (status, label, style) for the current TSX market state.
+
+    status values: 'open' | 'pre_market' | 'after_hours' | 'weekend' | 'holiday'
+    label  : human-readable description shown in the banner
+    style  : Rich colour string
+    """
+    now   = datetime.now(ET)
+    today = now.date()
+    now_t = now.time()
+
+    if today in TSX_HOLIDAYS:
+        return "holiday", "TSX Closed — Market Holiday  (data reflects last close)", "red"
+
+    weekday = today.weekday()  # 0=Mon … 6=Sun
+    if weekday >= 5:
+        # Find next Monday
+        days_until_open = 7 - weekday
+        next_open = today.replace(day=today.day + days_until_open)
+        return (
+            "weekend",
+            f"TSX Closed — Weekend  (reopens Monday {next_open.strftime('%b %d')} at 9:30 AM ET)",
+            "red",
+        )
+
+    if now_t < TSX_OPEN:
+        opens_in = datetime.combine(today, TSX_OPEN, tzinfo=ET) - now
+        mins = int(opens_in.total_seconds() // 60)
+        return (
+            "pre_market",
+            f"Pre-Market  —  TSX opens in {mins} min (9:30 AM ET)  |  Prices reflect yesterday's close",
+            "yellow",
+        )
+
+    if now_t >= TSX_CLOSE:
+        return (
+            "after_hours",
+            "After Hours  —  TSX closed at 4:00 PM ET  |  Prices reflect today's close",
+            "yellow",
+        )
+
+    closes_in = datetime.combine(today, TSX_CLOSE, tzinfo=ET) - now
+    mins = int(closes_in.total_seconds() // 60)
+    h, m = divmod(mins, 60)
+    time_left = f"{h}h {m}m" if h else f"{m}m"
+    return (
+        "open",
+        f"Market Open  —  TSX closes in {time_left} (4:00 PM ET)",
+        "green",
+    )
+
+
+def print_market_status():
+    """Print a compact market-status banner below the header."""
+    status, label, style = get_market_status()
+
+    # Choose an icon per state
+    icon = {
+        "open":        "● LIVE",
+        "pre_market":  "◐ PRE-MARKET",
+        "after_hours": "◑ AFTER HOURS",
+        "weekend":     "○ CLOSED",
+        "holiday":     "○ CLOSED",
+    }[status]
+
+    console.print(
+        Panel(
+            f"[{style}]{icon}[/{style}]  [white]{label}[/white]",
+            border_style=style,
+            expand=False,
+            padding=(0, 2),
+        )
+    )
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
@@ -498,6 +606,7 @@ def run_scan(tickers: list[str], etf_set: set[str]):
 def main():
     console.clear()
     print_header()
+    print_market_status()
 
     tickers, etf_set = get_ticker_list()
 
@@ -510,7 +619,9 @@ def main():
         ).strip().lower()
 
         if choice == "y":
-            console.print("\n[dim]Re-fetching fresh data…[/dim]\n")
+            console.print()
+            print_market_status()
+            console.print("[dim]Re-fetching fresh data…[/dim]\n")
             continue
         else:
             console.print(
