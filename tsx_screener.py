@@ -1,6 +1,7 @@
 """
-Stonks.ca — TSX Stock Screener CLI
-Scans TSX-listed equities for notable signals using real market data from yfinance.
+Stonks.ca — Multi-Exchange Stock Screener CLI
+Scans equities on TSX, NYSE/NASDAQ, BSE, and NSE for notable signals
+using real market data from yfinance.
 """
 
 # ── Dependency check ────────────────────────────────────────────────────────
@@ -34,113 +35,257 @@ from rich.text import Text
 warnings.filterwarnings("ignore")  # suppress yfinance noise
 
 # ── Configuration ────────────────────────────────────────────────────────────
-DEFAULT_WATCHLIST = [
-    "RY.TO", "TD.TO", "BNS.TO", "BMO.TO", "CM.TO",
-    "CNR.TO", "CP.TO", "SU.TO", "ENB.TO", "TRP.TO",
-    "ABX.TO", "AEM.TO", "SHOP.TO", "CSU.TO", "MFC.TO",
-    "SLF.TO", "BCE.TO", "T.TO", "WCN.TO", "ATD.TO",
-]
 
 # Filter thresholds (all configurable here)
 THRESHOLDS = {
-    "pe_max": 20,           # flag if P/E is below this value (value stock territory)
+    "pe_max": 20,            # flag if P/E is below this value (value stock territory)
     "volume_spike_x": 1.5,  # flag if today's volume > N × 20-day average
-    "week52_pct": 5.0,      # flag if within X% of 52-week high or low
+    "week52_pct": 5.0,       # flag if within X% of 52-week high or low
     "price_change_pct": 2.0, # flag if |% change today| exceeds this
 }
 
 console = Console()
 
-ET = ZoneInfo("America/Toronto")
+# ── Exchange definitions ──────────────────────────────────────────────────────
 
-# TSX statutory holidays for 2025 and 2026 (YYYY-MM-DD)
-TSX_HOLIDAYS = {
-    # 2025
+_ET  = ZoneInfo("America/New_York")
+_IST = ZoneInfo("Asia/Kolkata")
+
+# NYSE/NASDAQ statutory holidays 2025–2026
+_NYSE_HOLIDAYS = {
+    date(2025, 1, 1),   # New Year's Day
+    date(2025, 1, 20),  # MLK Day
+    date(2025, 2, 17),  # Presidents' Day
+    date(2025, 4, 18),  # Good Friday
+    date(2025, 5, 26),  # Memorial Day
+    date(2025, 6, 19),  # Juneteenth
+    date(2025, 7, 4),   # Independence Day
+    date(2025, 9, 1),   # Labor Day
+    date(2025, 11, 27), # Thanksgiving
+    date(2025, 12, 25), # Christmas
+    date(2026, 1, 1),   # New Year's Day
+    date(2026, 1, 19),  # MLK Day
+    date(2026, 2, 16),  # Presidents' Day
+    date(2026, 4, 3),   # Good Friday
+    date(2026, 5, 25),  # Memorial Day
+    date(2026, 6, 19),  # Juneteenth
+    date(2026, 7, 3),   # Independence Day (observed)
+    date(2026, 9, 7),   # Labor Day
+    date(2026, 11, 26), # Thanksgiving
+    date(2026, 12, 25), # Christmas
+}
+
+# TSX statutory holidays 2025–2026
+_TSX_HOLIDAYS = {
     date(2025, 1, 1),   # New Year's Day
     date(2025, 2, 17),  # Family Day (Ontario)
     date(2025, 4, 18),  # Good Friday
     date(2025, 5, 19),  # Victoria Day
     date(2025, 7, 1),   # Canada Day
-    date(2025, 8, 4),   # Civic Holiday (Ontario)
+    date(2025, 8, 4),   # Civic Holiday
     date(2025, 9, 1),   # Labour Day
     date(2025, 10, 13), # Thanksgiving
     date(2025, 12, 25), # Christmas Day
     date(2025, 12, 26), # Boxing Day
-    # 2026
     date(2026, 1, 1),   # New Year's Day
     date(2026, 2, 16),  # Family Day (Ontario)
     date(2026, 4, 3),   # Good Friday
     date(2026, 5, 18),  # Victoria Day
     date(2026, 7, 1),   # Canada Day
-    date(2026, 8, 3),   # Civic Holiday (Ontario)
+    date(2026, 8, 3),   # Civic Holiday
     date(2026, 9, 7),   # Labour Day
     date(2026, 10, 12), # Thanksgiving
     date(2026, 12, 25), # Christmas Day
     date(2026, 12, 28), # Boxing Day (observed)
 }
 
-TSX_OPEN  = time(9, 30)
-TSX_CLOSE = time(16, 0)
+# BSE / NSE shared holidays 2025–2026
+_INDIA_HOLIDAYS = {
+    date(2025, 1, 26),  # Republic Day
+    date(2025, 2, 19),  # Chhatrapati Shivaji Maharaj Jayanti
+    date(2025, 3, 14),  # Holi
+    date(2025, 4, 14),  # Dr. Ambedkar Jayanti
+    date(2025, 4, 18),  # Good Friday
+    date(2025, 5, 1),   # Maharashtra Day
+    date(2025, 8, 15),  # Independence Day
+    date(2025, 10, 2),  # Gandhi Jayanti
+    date(2025, 10, 24), # Diwali — Laxmi Pujan
+    date(2025, 10, 25), # Diwali — Balipratipada
+    date(2025, 11, 5),  # Guru Nanak Jayanti
+    date(2025, 12, 25), # Christmas
+    date(2026, 1, 26),  # Republic Day
+    date(2026, 3, 3),   # Holi
+    date(2026, 4, 3),   # Good Friday
+    date(2026, 4, 14),  # Dr. Ambedkar Jayanti
+    date(2026, 5, 1),   # Maharashtra Day
+    date(2026, 8, 15),  # Independence Day
+    date(2026, 10, 2),  # Gandhi Jayanti
+    date(2026, 10, 17), # Diwali
+    date(2026, 11, 25), # Guru Nanak Jayanti
+    date(2026, 12, 25), # Christmas
+}
+
+EXCHANGES = {
+    "1": {
+        "key":       "tsx",
+        "name":      "TSX (Toronto Stock Exchange)",
+        "suffix":    ".TO",
+        "currency":  "CAD",
+        "tz":        _ET,
+        "open":      time(9, 30),
+        "close":     time(16, 0),
+        "open_label":  "9:30 AM ET",
+        "close_label": "4:00 PM ET",
+        "holidays":  _TSX_HOLIDAYS,
+        "watchlist": [
+            "RY.TO", "TD.TO", "BNS.TO", "BMO.TO", "CM.TO",
+            "CNR.TO", "CP.TO", "SU.TO", "ENB.TO", "TRP.TO",
+            "ABX.TO", "AEM.TO", "SHOP.TO", "CSU.TO", "MFC.TO",
+            "SLF.TO", "BCE.TO", "T.TO", "WCN.TO", "ATD.TO",
+        ],
+        "etf_examples": "XIU.TO  XIC.TO  ZEB.TO  XEI.TO  VCN.TO  HXT.TO  ZAG.TO",
+    },
+    "2": {
+        "key":       "nyse",
+        "name":      "NYSE / NASDAQ (United States)",
+        "suffix":    "",
+        "currency":  "USD",
+        "tz":        _ET,
+        "open":      time(9, 30),
+        "close":     time(16, 0),
+        "open_label":  "9:30 AM ET",
+        "close_label": "4:00 PM ET",
+        "holidays":  _NYSE_HOLIDAYS,
+        "watchlist": [
+            "AAPL", "MSFT", "AMZN", "GOOGL", "META",
+            "NVDA", "TSLA", "JPM", "JNJ", "V",
+            "WMT", "UNH", "BAC", "XOM", "PG",
+            "MA", "HD", "CVX", "LLY", "ABBV",
+        ],
+        "etf_examples": "SPY  QQQ  IWM  VTI  VOO  GLD  TLT  XLF  XLE",
+    },
+    "3": {
+        "key":       "bse",
+        "name":      "BSE (Bombay Stock Exchange)",
+        "suffix":    ".BO",
+        "currency":  "INR",
+        "tz":        _IST,
+        "open":      time(9, 15),
+        "close":     time(15, 30),
+        "open_label":  "9:15 AM IST",
+        "close_label": "3:30 PM IST",
+        "holidays":  _INDIA_HOLIDAYS,
+        "watchlist": [
+            "RELIANCE.BO", "TCS.BO", "INFY.BO", "HDFCBANK.BO", "ICICIBANK.BO",
+            "HINDUNILVR.BO", "SBIN.BO", "BHARTIARTL.BO", "WIPRO.BO", "BAJFINANCE.BO",
+            "KOTAKBANK.BO", "LT.BO", "AXISBANK.BO", "ASIANPAINT.BO", "MARUTI.BO",
+            "SUNPHARMA.BO", "TITAN.BO", "ULTRACEMCO.BO", "NESTLEIND.BO", "POWERGRID.BO",
+        ],
+        "etf_examples": "NIFTYBEES.BO  BANKBEES.BO  JUNIORBEES.BO  GOLDBEES.BO",
+    },
+    "4": {
+        "key":       "nse",
+        "name":      "NSE (National Stock Exchange, India)",
+        "suffix":    ".NS",
+        "currency":  "INR",
+        "tz":        _IST,
+        "open":      time(9, 15),
+        "close":     time(15, 30),
+        "open_label":  "9:15 AM IST",
+        "close_label": "3:30 PM IST",
+        "holidays":  _INDIA_HOLIDAYS,
+        "watchlist": [
+            "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS",
+            "HINDUNILVR.NS", "SBIN.NS", "BHARTIARTL.NS", "WIPRO.NS", "BAJFINANCE.NS",
+            "KOTAKBANK.NS", "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS",
+            "SUNPHARMA.NS", "TITAN.NS", "ULTRACEMCO.NS", "NESTLEIND.NS", "POWERGRID.NS",
+        ],
+        "etf_examples": "NIFTYBEES.NS  BANKBEES.NS  JUNIORBEES.NS  GOLDBEES.NS",
+    },
+}
 
 
-def get_market_status() -> tuple[str, str, str]:
+# ── Exchange selection ────────────────────────────────────────────────────────
+
+def select_exchange() -> dict:
+    """Prompt the user to choose an exchange and return its config dict."""
+    console.print("\n[bold cyan]Select Exchange[/bold cyan]")
+    for key, ex in EXCHANGES.items():
+        console.print(f"  [bold white]{key}[/bold white]  {ex['name']}")
+    console.print()
+
+    while True:
+        choice = console.input(
+            "[bold]Enter exchange number[/bold] ([dim]1–4, default 1[/dim]): "
+        ).strip()
+        if not choice:
+            choice = "1"
+        if choice in EXCHANGES:
+            exchange = EXCHANGES[choice]
+            console.print(f"\n  [green]✓[/green] Selected: [bold]{exchange['name']}[/bold]\n")
+            return exchange
+        console.print("  [red]Invalid choice — enter 1, 2, 3, or 4.[/red]")
+
+
+# ── Market status ─────────────────────────────────────────────────────────────
+
+def get_market_status(exchange: dict) -> tuple[str, str, str]:
     """
-    Return (status, label, style) for the current TSX market state.
+    Return (status, label, style) for the current market state of the given exchange.
 
     status values: 'open' | 'pre_market' | 'after_hours' | 'weekend' | 'holiday'
     label  : human-readable description shown in the banner
     style  : Rich colour string
     """
-    now   = datetime.now(ET)
+    now   = datetime.now(exchange["tz"])
     today = now.date()
     now_t = now.time()
+    name  = exchange["name"]
 
-    if today in TSX_HOLIDAYS:
-        return "holiday", "TSX Closed — Market Holiday  (data reflects last close)", "red"
+    if today in exchange["holidays"]:
+        return "holiday", f"{name} Closed — Market Holiday  (data reflects last close)", "red"
 
     weekday = today.weekday()  # 0=Mon … 6=Sun
     if weekday >= 5:
-        # Find next Monday
         days_until_open = 7 - weekday
         next_open = today.replace(day=today.day + days_until_open)
         return (
             "weekend",
-            f"TSX Closed — Weekend  (reopens Monday {next_open.strftime('%b %d')} at 9:30 AM ET)",
+            f"{name} Closed — Weekend  (reopens Monday {next_open.strftime('%b %d')} at {exchange['open_label']})",
             "red",
         )
 
-    if now_t < TSX_OPEN:
-        opens_in = datetime.combine(today, TSX_OPEN, tzinfo=ET) - now
+    if now_t < exchange["open"]:
+        opens_in = datetime.combine(today, exchange["open"], tzinfo=exchange["tz"]) - now
         mins = int(opens_in.total_seconds() // 60)
         return (
             "pre_market",
-            f"Pre-Market  —  TSX opens in {mins} min (9:30 AM ET)  |  Prices reflect yesterday's close",
+            f"Pre-Market  —  {name} opens in {mins} min ({exchange['open_label']})  |  Prices reflect yesterday's close",
             "yellow",
         )
 
-    if now_t >= TSX_CLOSE:
+    if now_t >= exchange["close"]:
         return (
             "after_hours",
-            "After Hours  —  TSX closed at 4:00 PM ET  |  Prices reflect today's close",
+            f"After Hours  —  {name} closed at {exchange['close_label']}  |  Prices reflect today's close",
             "yellow",
         )
 
-    closes_in = datetime.combine(today, TSX_CLOSE, tzinfo=ET) - now
+    closes_in = datetime.combine(today, exchange["close"], tzinfo=exchange["tz"]) - now
     mins = int(closes_in.total_seconds() // 60)
     h, m = divmod(mins, 60)
     time_left = f"{h}h {m}m" if h else f"{m}m"
     return (
         "open",
-        f"Market Open  —  TSX closes in {time_left} (4:00 PM ET)",
+        f"Market Open  —  {name} closes in {time_left} ({exchange['close_label']})",
         "green",
     )
 
 
-def print_market_status():
+def print_market_status(exchange: dict):
     """Print a compact market-status banner below the header."""
-    status, label, style = get_market_status()
+    status, label, style = get_market_status(exchange)
 
-    # Choose an icon per state
     icon = {
         "open":        "● LIVE",
         "pre_market":  "◐ PRE-MARKET",
@@ -395,9 +540,9 @@ def fmt_alerts(alerts: list[str]) -> Text:
 
 # ── Display ───────────────────────────────────────────────────────────────────
 
-def build_table(results: list[dict]) -> tuple[Table, int]:
+def build_table(results: list[dict], currency: str) -> tuple[Table, int, list]:
     """
-    Build the Rich results table. Returns (table, alert_count).
+    Build the Rich results table. Returns (table, alert_count, notable).
     """
     table = Table(
         title=None,
@@ -407,14 +552,14 @@ def build_table(results: list[dict]) -> tuple[Table, int]:
         expand=False,
     )
 
-    table.add_column("Ticker",       style="bold white",  justify="left",  min_width=9)
-    table.add_column("Price (CAD)",  style="white",       justify="right", min_width=11)
-    table.add_column("% Change",     justify="right",     min_width=9)
-    table.add_column("Vol Spike",    justify="right",     min_width=9)
-    table.add_column("P/E",          justify="right",     min_width=6)
-    table.add_column("52W Position", justify="left",      min_width=18)
-    table.add_column("Alerts",       justify="left",      min_width=20)
-    table.add_column("Suggestion",   justify="left",      min_width=38)
+    table.add_column("Ticker",                  style="bold white",  justify="left",  min_width=14)
+    table.add_column(f"Price ({currency})",     style="white",       justify="right", min_width=13)
+    table.add_column("% Change",                justify="right",     min_width=9)
+    table.add_column("Vol Spike",               justify="right",     min_width=9)
+    table.add_column("P/E",                     justify="right",     min_width=6)
+    table.add_column("52W Position",            justify="left",      min_width=18)
+    table.add_column("Alerts",                  justify="left",      min_width=20)
+    table.add_column("Suggestion",              justify="left",      min_width=38)
 
     alert_count = 0
     notable: list[tuple[str, str, str]] = []  # (ticker, suggestion, style) for summary panel
@@ -428,7 +573,7 @@ def build_table(results: list[dict]) -> tuple[Table, int]:
             if suggestion != "—":
                 notable.append((row["ticker"], suggestion, sug_style))
 
-        price_str = f"${row['price']:.2f}" if row["price"] else "N/A"
+        price_str = f"{row['price']:.2f}" if row["price"] else "N/A"
 
         # Badge ETF tickers with a dim label so they stand out from equities
         ticker_cell = Text()
@@ -453,12 +598,12 @@ def build_table(results: list[dict]) -> tuple[Table, int]:
     return table, alert_count, notable
 
 
-def print_header():
+def print_header(exchange: dict):
     """Print the branded application header."""
     ts = datetime.now().strftime("%A, %B %d %Y  %H:%M:%S")
     console.print(
         Panel(
-            f"[bold white]TSX STOCK SCREENER[/bold white]\n"
+            f"[bold white]STOCK SCREENER — {exchange['name'].upper()}[/bold white]\n"
             f"[dim]{ts}[/dim]",
             title="[bold green]Stonks.ca[/bold green]",
             subtitle="[dim]Powered by yfinance[/dim]",
@@ -474,7 +619,7 @@ def print_notable_signals(notable: list[tuple[str, str, str]]):
         return
     lines = Text()
     for ticker, suggestion, style in notable:
-        lines.append(f"  {ticker:<10}", style="bold white")
+        lines.append(f"  {ticker:<14}", style="bold white")
         lines.append(f"{suggestion}\n", style=style)
     console.print(
         Panel(
@@ -536,42 +681,62 @@ def export_csv(results: list[dict], path: str):
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
-def _parse_tickers(raw: str, label: str) -> list[str]:
-    """Parse a comma-separated ticker string, warn on missing .TO suffix."""
+def _parse_tickers(raw: str, label: str, exchange: dict) -> list[str]:
+    """
+    Parse a comma-separated ticker string.
+    For exchanges that require a suffix, warn if it's missing.
+    For NYSE/NASDAQ (no suffix), warn if a foreign suffix is present.
+    """
+    suffix = exchange["suffix"]
     tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
     for t in tickers:
-        if not t.endswith(".TO"):
-            console.print(
-                f"  [yellow]⚠ '{t}' does not end with .TO — TSX tickers require the .TO suffix ({label})[/yellow]"
-            )
+        if suffix:
+            # Suffix-based exchanges (TSX, BSE, NSE)
+            if not t.endswith(suffix):
+                console.print(
+                    f"  [yellow]⚠ '{t}' does not end with {suffix} — "
+                    f"{exchange['name']} tickers require the {suffix} suffix ({label})[/yellow]"
+                )
+        else:
+            # NYSE/NASDAQ: warn if ticker carries any known exchange suffix
+            for known_suffix in (".TO", ".NS", ".BO", ".L", ".AX", ".DE"):
+                if t.endswith(known_suffix):
+                    console.print(
+                        f"  [yellow]⚠ '{t}' has suffix {known_suffix} — "
+                        f"NYSE/NASDAQ tickers have no suffix ({label})[/yellow]"
+                    )
+                    break
     return tickers
 
 
-def get_ticker_list() -> tuple[list[str], set[str]]:
+def get_ticker_list(exchange: dict) -> tuple[list[str], set[str]]:
     """
     Prompt the user for optional custom stock tickers and ETF tickers.
     Returns (all_tickers, etf_set) where etf_set is the subset that are ETFs.
     """
+    suffix = exchange["suffix"]
+    suffix_hint = f" with {suffix} suffix" if suffix else " (no suffix needed)"
+
     console.print("\n[bold cyan]Stock Universe[/bold cyan]")
-    console.print(f"  Default watchlist: [dim]{', '.join(DEFAULT_WATCHLIST)}[/dim]\n")
+    console.print(f"  Default watchlist: [dim]{', '.join(exchange['watchlist'])}[/dim]\n")
 
     # ── Custom stocks ──────────────────────────────────────────────────────
     raw_stocks = console.input(
-        "[bold]Add custom stock tickers?[/bold] (comma-separated with .TO suffix, or [dim]Enter[/dim] to skip): "
+        f"[bold]Add custom stock tickers?[/bold] (comma-separated{suffix_hint}, or [dim]Enter[/dim] to skip): "
     ).strip()
-    custom_stocks = _parse_tickers(raw_stocks, "stock") if raw_stocks else []
+    custom_stocks = _parse_tickers(raw_stocks, "stock", exchange) if raw_stocks else []
 
     # ── ETFs ───────────────────────────────────────────────────────────────
     console.print(
-        "\n  [dim]Common TSX ETFs: XIU.TO  XIC.TO  ZEB.TO  XEI.TO  VCN.TO  HXT.TO  ZAG.TO[/dim]"
+        f"\n  [dim]Common ETFs: {exchange['etf_examples']}[/dim]"
     )
     raw_etfs = console.input(
-        "[bold]Add ETF tickers?[/bold]        (comma-separated with .TO suffix, or [dim]Enter[/dim] to skip): "
+        f"[bold]Add ETF tickers?[/bold]        (comma-separated{suffix_hint}, or [dim]Enter[/dim] to skip): "
     ).strip()
-    custom_etfs = _parse_tickers(raw_etfs, "ETF") if raw_etfs else []
+    custom_etfs = _parse_tickers(raw_etfs, "ETF", exchange) if raw_etfs else []
 
     # Merge everything, deduplicate, preserve order
-    all_tickers = list(dict.fromkeys(DEFAULT_WATCHLIST + custom_stocks + custom_etfs))
+    all_tickers = list(dict.fromkeys(exchange["watchlist"] + custom_stocks + custom_etfs))
     etf_set = set(custom_etfs)
 
     stock_count = len(all_tickers) - len(etf_set)
@@ -583,7 +748,7 @@ def get_ticker_list() -> tuple[list[str], set[str]]:
     return all_tickers, etf_set
 
 
-def run_scan(tickers: list[str], etf_set: set[str]):
+def run_scan(tickers: list[str], etf_set: set[str], exchange: dict):
     """Execute a full scan: fetch → display → export."""
     results = scan_tickers(tickers, etf_set)
 
@@ -591,13 +756,16 @@ def run_scan(tickers: list[str], etf_set: set[str]):
         console.print("[red]No data retrieved. Check your connection or ticker symbols.[/red]")
         return
 
-    table, alert_count, notable = build_table(results)
+    table, alert_count, notable = build_table(results, exchange["currency"])
     console.print(table)
     print_notable_signals(notable)
 
     # CSV export with timestamped filename — saved to Desktop
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = os.path.join(os.path.expanduser("~/Desktop"), f"tsx_screener_report_{ts}.csv")
+    csv_path = os.path.join(
+        os.path.expanduser("~/Desktop"),
+        f"{exchange['key']}_screener_report_{ts}.csv",
+    )
     export_csv(results, csv_path)
 
     print_summary(len(results), alert_count, csv_path)
@@ -605,13 +773,16 @@ def run_scan(tickers: list[str], etf_set: set[str]):
 
 def main():
     console.clear()
-    print_header()
-    print_market_status()
 
-    tickers, etf_set = get_ticker_list()
+    exchange = select_exchange()
+
+    print_header(exchange)
+    print_market_status(exchange)
+
+    tickers, etf_set = get_ticker_list(exchange)
 
     while True:
-        run_scan(tickers, etf_set)
+        run_scan(tickers, etf_set, exchange)
 
         console.print()
         choice = console.input(
@@ -620,7 +791,7 @@ def main():
 
         if choice == "y":
             console.print()
-            print_market_status()
+            print_market_status(exchange)
             console.print("[dim]Re-fetching fresh data…[/dim]\n")
             continue
         else:
