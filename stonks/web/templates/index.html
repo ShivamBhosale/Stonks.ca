@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stonks.ca — Stock Screener</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="header-brand">
+    <span class="brand">Stonks.ca</span>
+    <span class="brand-sub">Multi-Exchange Stock Screener</span>
+  </div>
+  <div
+    id="market-status"
+    class="market-status"
+    hx-get="/status"
+    hx-trigger="load, every 30s"
+    hx-include="#exchange-select"
+    hx-vals='js:{exchange: document.getElementById("exchange-select").value}'
+  >
+    <span class="na">Loading market status…</span>
+  </div>
+</header>
+
+<!-- ── Controls ── -->
+<div class="controls">
+  <div class="control-group">
+    <label for="exchange-select">Exchange</label>
+    <select id="exchange-select" name="exchange" onchange="refreshStatus()">
+      {% for key, ex in exchanges.items() %}
+      <option value="{{ key }}">{{ ex.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="control-group">
+    <label for="custom-stocks">Add Stocks</label>
+    <input id="custom-stocks" name="custom_stocks" type="text"
+           placeholder="e.g. SHOP.TO, ATD.TO" autocomplete="off" />
+  </div>
+
+  <div class="control-group">
+    <label for="custom-etfs">Add ETFs</label>
+    <input id="custom-etfs" name="custom_etfs" type="text"
+           placeholder="e.g. XIU.TO, SPY" autocomplete="off" />
+  </div>
+
+  <div class="control-group">
+    <label for="sort-select">Sort By</label>
+    <select id="sort-select" name="sort_by">
+      <option value="ticker">Ticker</option>
+      <option value="pct_change">% Change</option>
+      <option value="volume">Volume Spike</option>
+      <option value="rsi">RSI</option>
+      <option value="pe">P/E</option>
+    </select>
+  </div>
+
+  <div class="control-group">
+    <label for="refresh-select">Auto-Refresh</label>
+    <select id="refresh-select" onchange="updateAutoRefresh()">
+      <option value="0">Off</option>
+      <option value="30">30s</option>
+      <option value="60" selected>1 min</option>
+      <option value="300">5 min</option>
+      <option value="600">10 min</option>
+    </select>
+  </div>
+
+  <div class="control-group checkbox-group">
+    <label>
+      <input type="checkbox" id="flagged-only" /> Flagged only
+    </label>
+  </div>
+
+  <div class="control-group checkbox-group">
+    <label>
+      <input type="checkbox" id="export-check" /> Export CSV+JSON
+    </label>
+  </div>
+
+  <button class="scan-btn" onclick="triggerScan()">Scan Now</button>
+</div>
+
+<!-- ── Spinner ── -->
+<div id="scan-indicator" class="scan-indicator hidden">
+  <span class="spinner"></span> Fetching market data…
+</div>
+
+<!-- ── Results ── -->
+<div id="results" class="results-container">
+  <p class="hint">Select an exchange and press <strong>Scan Now</strong> to begin.</p>
+</div>
+
+<!-- ── Footer ── -->
+<footer>
+  <span>Powered by <a href="https://github.com/ranaroussi/yfinance" target="_blank">yfinance</a></span>
+  <span class="disclaimer">Not financial advice — for informational purposes only.</span>
+</footer>
+
+<script>
+  let autoRefreshTimer = null;
+
+  function getFormData() {
+    return {
+      exchange:      document.getElementById("exchange-select").value,
+      custom_stocks: document.getElementById("custom-stocks").value,
+      custom_etfs:   document.getElementById("custom-etfs").value,
+      sort_by:       document.getElementById("sort-select").value,
+      flagged_only:  document.getElementById("flagged-only").checked ? "true" : "false",
+      export:        document.getElementById("export-check").checked ? "true" : "false",
+    };
+  }
+
+  function triggerScan() {
+    const indicator = document.getElementById("scan-indicator");
+    const results   = document.getElementById("results");
+    indicator.classList.remove("hidden");
+    results.innerHTML = "";
+
+    const params = new URLSearchParams(getFormData());
+
+    fetch("/scan", { method: "POST", body: params })
+      .then(r => r.text())
+      .then(html => {
+        results.innerHTML = html;
+        indicator.classList.add("hidden");
+      })
+      .catch(() => {
+        results.innerHTML = '<p class="error">Scan failed — check connection.</p>';
+        indicator.classList.add("hidden");
+      });
+  }
+
+  function updateAutoRefresh() {
+    clearInterval(autoRefreshTimer);
+    const secs = parseInt(document.getElementById("refresh-select").value, 10);
+    if (secs > 0) {
+      autoRefreshTimer = setInterval(triggerScan, secs * 1000);
+    }
+  }
+
+  function refreshStatus() {
+    const exchange = document.getElementById("exchange-select").value;
+    fetch("/status?exchange=" + exchange)
+      .then(r => r.text())
+      .then(html => { document.getElementById("market-status").innerHTML = html; });
+  }
+
+  // Kick off a default scan on load
+  window.addEventListener("DOMContentLoaded", () => {
+    triggerScan();
+    updateAutoRefresh();
+  });
+</script>
+</body>
+</html>

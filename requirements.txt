@@ -1,0 +1,4 @@
+yfinance
+rich
+pandas
+flask
