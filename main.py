@@ -115,13 +115,23 @@ def get_ticker_list(exchange: dict) -> tuple[list[str], set[str]]:
 
 def get_display_options() -> tuple[str, bool]:
     """Ask sort order and flagged-only filter. Returns (sort_by, flagged_only)."""
-    console.print("[dim]Sort by:[/dim] [white]1[/white] Ticker  [white]2[/white] % Change  "
-                  "[white]3[/white] Volume  [white]4[/white] RSI  [white]5[/white] P/E")
+    console.print(
+        "[dim]Sort by:[/dim] [white]1[/white] Score  [white]2[/white] Ticker  "
+        "[white]3[/white] % Change  [white]4[/white] Volume  [white]5[/white] RSI  "
+        "[white]6[/white] P/E"
+    )
     sort_choice = console.input(
-        "[bold]Sort?[/bold] ([dim]1–5, default 1[/dim]): "
+        "[bold]Sort?[/bold] ([dim]1–6, default 1 (Score)[/dim]): "
     ).strip()
-    sort_map = {"1": "ticker", "2": "pct_change", "3": "volume", "4": "rsi", "5": "pe"}
-    sort_by  = sort_map.get(sort_choice, "ticker")
+    sort_map = {
+        "1": "score",
+        "2": "ticker",
+        "3": "pct_change",
+        "4": "volume",
+        "5": "rsi",
+        "6": "pe",
+    }
+    sort_by = sort_map.get(sort_choice, "score")
 
     flagged_raw  = console.input(
         "[bold]Show flagged tickers only?[/bold] ([dim]y/n, default n[/dim]): "
@@ -225,7 +235,7 @@ def web_main():
     import webbrowser
     from stonks.web.app import app
 
-    port = 5000
+    port = 5001
     console.print(
         Panel(
             f"[bold green]Stonks.ca[/bold green] — Web Dashboard\n"

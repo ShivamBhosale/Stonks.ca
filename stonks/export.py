@@ -7,13 +7,14 @@ import json
 import os
 from datetime import datetime
 
-from .signals import evaluate_alerts, generate_suggestion
+from .signals import compute_signals
 
 _FIELDNAMES = [
     "ticker", "type", "price", "pct_change", "volume", "avg_volume",
     "volume_ratio", "pe_ratio", "week52_high", "week52_low",
     "pct_from_high", "pct_from_low", "rsi", "ma50", "ma200",
-    "market_cap", "sector", "industry", "alerts", "suggestion",
+    "market_cap", "sector", "industry",
+    "score", "direction", "alerts", "suggestion",
 ]
 
 
@@ -29,8 +30,7 @@ def export_csv(results: list[dict], path: str):
         writer = csv.DictWriter(f, fieldnames=_FIELDNAMES)
         writer.writeheader()
         for row in sorted(results, key=lambda r: r["ticker"]):
-            alerts = evaluate_alerts(row)
-            suggestion, _ = generate_suggestion(alerts, row)
+            sig = compute_signals(row)
             writer.writerow({
                 "ticker":        row["ticker"],
                 "type":          "ETF" if row.get("is_etf") else "Stock",
@@ -50,8 +50,10 @@ def export_csv(results: list[dict], path: str):
                 "market_cap":    row.get("market_cap") or "",
                 "sector":        row.get("sector") or "",
                 "industry":      row.get("industry") or "",
-                "alerts":        " | ".join(alerts),
-                "suggestion":    suggestion if suggestion != "—" else "",
+                "score":         sig["score"],
+                "direction":     sig["direction"],
+                "alerts":        " | ".join(sig["alerts"]),
+                "suggestion":    sig["suggestion"] if sig["suggestion"] != "—" else "",
             })
 
 
@@ -59,8 +61,7 @@ def export_json(results: list[dict], path: str):
     """Write scan results (with evaluated alerts) to a JSON file."""
     output = []
     for row in sorted(results, key=lambda r: r["ticker"]):
-        alerts = evaluate_alerts(row)
-        suggestion, _ = generate_suggestion(alerts, row)
+        sig = compute_signals(row)
         output.append({
             "ticker":        row["ticker"],
             "type":          "ETF" if row.get("is_etf") else "Stock",
@@ -80,8 +81,12 @@ def export_json(results: list[dict], path: str):
             "market_cap":    row.get("market_cap"),
             "sector":        row.get("sector") or None,
             "industry":      row.get("industry") or None,
-            "alerts":        alerts,
-            "suggestion":    suggestion if suggestion != "—" else None,
+            "score":         sig["score"],
+            "direction":     sig["direction"],
+            "bull_pts":      round(sig["bull_pts"], 1),
+            "bear_pts":      round(sig["bear_pts"], 1),
+            "alerts":        sig["alerts"],
+            "suggestion":    sig["suggestion"] if sig["suggestion"] != "—" else None,
         })
     with open(path, "w") as f:
         json.dump(output, f, indent=2)

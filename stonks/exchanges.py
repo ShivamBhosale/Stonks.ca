@@ -2,7 +2,7 @@
 Exchange configurations, market-status helpers, and exchange selection.
 """
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from rich.console import Console
@@ -203,7 +203,7 @@ def get_market_status(exchange: dict) -> tuple[str, str, str]:
     weekday = today.weekday()
     if weekday >= 5:
         days_until_open = 7 - weekday
-        next_open = today.replace(day=today.day + days_until_open)
+        next_open = today + timedelta(days=days_until_open)
         return (
             "weekend",
             f"{name} Closed — Weekend  (reopens Monday {next_open.strftime('%b %d')} at {exchange['open_label']})",

@@ -13,7 +13,7 @@ from flask import Flask, render_template, request
 
 from ..exchanges import EXCHANGES, get_market_status
 from ..fetcher import scan_tickers
-from ..signals import THRESHOLDS, evaluate_alerts, generate_suggestion
+from ..signals import THRESHOLDS, compute_signals
 from ..export import export_both
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -115,6 +115,31 @@ def _fmt_alerts(alerts):
     return "  ".join(parts)
 
 
+def _fmt_score(score, direction):
+    """HTML badge for the conviction score."""
+    if score < 8:
+        return '<span class="na">—</span>'
+    glyph = {"bullish": "↑", "bearish": "↓", "mixed": "⇅", "neutral": ""}.get(direction, "")
+    if score >= 60:
+        cls = {
+            "bullish": "score-strong-pos",
+            "bearish": "score-strong-neg",
+            "mixed":   "score-warn",
+        }.get(direction, "score-neutral")
+    elif score >= 30:
+        cls = {
+            "bullish": "score-pos",
+            "bearish": "score-neg",
+            "mixed":   "score-warn",
+        }.get(direction, "score-neutral")
+    else:
+        cls = {
+            "bullish": "score-lean-pos",
+            "bearish": "score-lean-neg",
+        }.get(direction, "score-neutral")
+    return f'<span class="{cls}">{score} {glyph}</span>'
+
+
 def _sug_class(style):
     if "bold green" in style:
         return "sug-strong-pos"
@@ -132,26 +157,37 @@ def _sug_class(style):
 
 
 SORT_KEYS = {
-    "ticker":    lambda r: r["ticker"],
-    "pct_change": lambda r: (r.get("pct_change") is None, -(r.get("pct_change") or 0)),
-    "volume":    lambda r: (r.get("volume_ratio") is None, -(r.get("volume_ratio") or 0)),
-    "rsi":       lambda r: (r.get("rsi") is None, r.get("rsi") or 50),
-    "pe":        lambda r: (r.get("pe_ratio") is None, r.get("pe_ratio") or 9999),
+    "ticker":     lambda r, s: (r["ticker"],),
+    "pct_change": lambda r, s: (r.get("pct_change") is None, -(r.get("pct_change") or 0)),
+    "volume":     lambda r, s: (r.get("volume_ratio") is None, -(r.get("volume_ratio") or 0)),
+    "rsi":        lambda r, s: (r.get("rsi") is None, r.get("rsi") or 50),
+    "pe":         lambda r, s: (r.get("pe_ratio") is None, r.get("pe_ratio") or 9999),
+    "score":      lambda r, s: (-s["score"], r["ticker"]),
 }
 
 
-def build_html_table(results, currency, sort_by="ticker", flagged_only=False):
-    sort_fn = SORT_KEYS.get(sort_by, SORT_KEYS["ticker"])
+def build_html_table(results, currency, sort_by="score", flagged_only=False):
+    # Enrich once, then sort, then render
+    enriched = []
+    for row in results:
+        sig = compute_signals(row)
+        if flagged_only and not sig["alerts"]:
+            continue
+        enriched.append((row, sig))
+
+    sort_fn = SORT_KEYS.get(sort_by, SORT_KEYS["score"])
+    enriched.sort(key=lambda pair: sort_fn(pair[0], pair[1]))
+
     rows_html = []
     alert_count = 0
     notable = []
 
-    for row in sorted(results, key=sort_fn):
-        alerts = evaluate_alerts(row)
-        suggestion, sug_style = generate_suggestion(alerts, row)
-
-        if flagged_only and not alerts:
-            continue
+    for row, sig in enriched:
+        alerts     = sig["alerts"]
+        suggestion = sig["suggestion"]
+        sug_style  = sig["style"]
+        score      = sig["score"]
+        direction  = sig["direction"]
 
         if alerts:
             alert_count += 1
@@ -177,6 +213,7 @@ def build_html_table(results, currency, sort_by="ticker", flagged_only=False):
   <td>{_fmt_ma(row)}</td>
   <td class="num">{_fmt_cap(row.get("market_cap"))}</td>
   <td class="sector">{row.get("sector") or "—"}</td>
+  <td class="num">{_fmt_score(score, direction)}</td>
   <td class="alerts-cell">{_fmt_alerts(alerts)}</td>
   <td class="{_sug_class(sug_style)}">{suggestion}</td>
 </tr>""")
@@ -188,7 +225,7 @@ def build_html_table(results, currency, sort_by="ticker", flagged_only=False):
     <th>Ticker</th><th>{currency_label}</th><th>% Change</th>
     <th>Vol Spike</th><th>P/E</th><th>52W Position</th>
     <th>RSI</th><th>MA Trend</th><th>Mkt Cap</th>
-    <th>Sector</th><th>Alerts</th><th>Suggestion</th>
+    <th>Sector</th><th>Score</th><th>Alerts</th><th>Suggestion</th>
   </tr>
 </thead>"""
 
@@ -226,7 +263,7 @@ def scan():
     custom_stocks  = request.form.get("custom_stocks", "").strip()
     custom_etfs    = request.form.get("custom_etfs", "").strip()
     flagged_only   = request.form.get("flagged_only") == "true"
-    sort_by        = request.form.get("sort_by", "ticker")
+    sort_by        = request.form.get("sort_by", "score")
     export_results = request.form.get("export") == "true"
 
     exchange = EXCHANGES.get(exchange_num, EXCHANGES["1"])

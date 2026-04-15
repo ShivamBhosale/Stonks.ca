@@ -10,7 +10,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .signals import THRESHOLDS, evaluate_alerts, generate_suggestion
+from .signals import THRESHOLDS, compute_signals
 
 console = Console()
 
@@ -90,6 +90,32 @@ def fmt_market_cap(cap: int | None) -> Text:
     return Text(f"{cap:,}", style="dim")
 
 
+def fmt_score(score: int, direction: str) -> Text:
+    """Colored conviction score + directional glyph."""
+    if score < 8:
+        return Text("—", style="dim")
+    glyph = {"bullish": "↑", "bearish": "↓", "mixed": "⇅", "neutral": " "}[direction]
+    if score >= 60:
+        style = {
+            "bullish": "bold green",
+            "bearish": "bold red",
+            "mixed":   "bold yellow",
+        }.get(direction, "bold white")
+    elif score >= 30:
+        style = {
+            "bullish": "green",
+            "bearish": "red",
+            "mixed":   "yellow",
+        }.get(direction, "white")
+    else:
+        style = {
+            "bullish": "cyan",
+            "bearish": "yellow",
+            "mixed":   "dim yellow",
+        }.get(direction, "dim")
+    return Text(f"{score:>3} {glyph}", style=style)
+
+
 def fmt_alerts(alerts: list[str]) -> Text:
     if not alerts:
         return Text("—", style="dim")
@@ -112,19 +138,22 @@ def fmt_alerts(alerts: list[str]) -> Text:
 
 # ── Table builder ─────────────────────────────────────────────────────────────
 
+# Sort keys receive the (row, signals) pair so score-based sorting is free
+# after compute_signals() has already run.
 SORT_KEYS = {
-    "ticker":    lambda r: r["ticker"],
-    "pct_change": lambda r: (r["pct_change"] is None, -(r["pct_change"] or 0)),
-    "volume":    lambda r: (r["volume_ratio"] is None, -(r["volume_ratio"] or 0)),
-    "rsi":       lambda r: (r["rsi"] is None, r["rsi"] or 50),
-    "pe":        lambda r: (r["pe_ratio"] is None, r["pe_ratio"] or 9999),
+    "ticker":     lambda r, s: (r["ticker"],),
+    "pct_change": lambda r, s: (r["pct_change"] is None, -(r["pct_change"] or 0)),
+    "volume":     lambda r, s: (r["volume_ratio"] is None, -(r["volume_ratio"] or 0)),
+    "rsi":        lambda r, s: (r["rsi"] is None, r["rsi"] or 50),
+    "pe":         lambda r, s: (r["pe_ratio"] is None, r["pe_ratio"] or 9999),
+    "score":      lambda r, s: (-s["score"], r["ticker"]),
 }
 
 
 def build_table(
     results: list[dict],
     currency: str,
-    sort_by: str = "ticker",
+    sort_by: str = "score",
     flagged_only: bool = False,
 ) -> tuple[Table, int, list]:
     """
@@ -150,21 +179,30 @@ def build_table(
     table.add_column("MA Trend",           justify="left",      min_width=11)
     table.add_column("Mkt Cap",            justify="right",     min_width=8)
     table.add_column("Sector",             justify="left",      min_width=14)
-    table.add_column("Alerts",             justify="left",      min_width=24)
-    table.add_column("Suggestion",         justify="left",      min_width=38)
+    table.add_column("Score",              justify="right",     min_width=7)
+    table.add_column("Alerts",             justify="left",      min_width=22)
+    table.add_column("Suggestion",         justify="left",      min_width=36)
 
-    sort_fn = SORT_KEYS.get(sort_by, SORT_KEYS["ticker"])
-    sorted_results = sorted(results, key=sort_fn)
+    # Compute signals once per row, then sort, then render
+    enriched: list[tuple[dict, dict]] = []
+    for row in results:
+        sig = compute_signals(row)
+        if flagged_only and not sig["alerts"]:
+            continue
+        enriched.append((row, sig))
+
+    sort_fn = SORT_KEYS.get(sort_by, SORT_KEYS["score"])
+    enriched.sort(key=lambda pair: sort_fn(pair[0], pair[1]))
 
     alert_count = 0
     notable: list[tuple[str, str, str]] = []
 
-    for row in sorted_results:
-        alerts = evaluate_alerts(row)
-        suggestion, sug_style = generate_suggestion(alerts, row)
-
-        if flagged_only and not alerts:
-            continue
+    for row, sig in enriched:
+        alerts     = sig["alerts"]
+        suggestion = sig["suggestion"]
+        sug_style  = sig["style"]
+        score      = sig["score"]
+        direction  = sig["direction"]
 
         if alerts:
             alert_count += 1
@@ -191,6 +229,7 @@ def build_table(
             fmt_ma_trend(row),
             fmt_market_cap(row.get("market_cap")),
             row.get("sector") or "—",
+            fmt_score(score, direction),
             fmt_alerts(alerts),
             Text(suggestion, style=sug_style),
         )

@@ -271,6 +271,16 @@ header {
 .sug-warn       { color: var(--yellow); }
 .sug-cyan       { color: var(--cyan); }
 
+/* ── Conviction score badge ─────────────────────────────────────────────────── */
+.score-strong-pos { color: var(--green-bold); font-weight: 700; }
+.score-pos        { color: var(--green); }
+.score-lean-pos   { color: var(--cyan); }
+.score-strong-neg { color: var(--red-bold); font-weight: 700; }
+.score-neg        { color: var(--red); }
+.score-lean-neg   { color: var(--yellow); }
+.score-warn       { color: var(--yellow); font-weight: 700; }
+.score-neutral    { color: var(--text-dim); }
+
 /* ── Footer ─────────────────────────────────────────────────────────────────── */
 footer {
   position: fixed;
