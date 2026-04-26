@@ -1,6 +1,6 @@
 # Stonks.ca
 
-A TSX Stock Screener CLI tool that scans Canadian equities and ETFs for notable market signals in real time — right from your terminal.
+A TSX Stock Screener CLI tool that scans equities and ETFs for notable market signals in real time — right from your terminal.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)

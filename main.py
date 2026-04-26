@@ -235,7 +235,7 @@ def web_main():
     import webbrowser
     from stonks.web.app import app
 
-    port = 5001
+    port = 5002
     console.print(
         Panel(
             f"[bold green]Stonks.ca[/bold green] — Web Dashboard\n"
